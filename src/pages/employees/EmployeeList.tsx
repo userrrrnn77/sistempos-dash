@@ -38,18 +38,19 @@ const CREATABLE_ROLES: { label: string; value: InternalRole }[] = [
 ];
 
 interface CreateFormState {
-  supabaseId: string;
   name: string;
   email: string;
+  /** Password akun buat login ke portal internal. Minimal 8 karakter. */
+  password: string;
   role: InternalRole;
   /** Wajib diisi kalau role === "CASHIER" — kasir selalu ditugaskan ke satu cabang. */
   branchId: string;
 }
 
 const EMPTY_FORM: CreateFormState = {
-  supabaseId: "",
   name: "",
   email: "",
+  password: "",
   role: "CASHIER",
   branchId: "",
 };
@@ -95,6 +96,11 @@ export default function EmployeeList() {
 
     if (form.role === "CASHIER" && !form.branchId) {
       setFormError("Kasir wajib ditugaskan ke satu cabang, Bre!");
+      return;
+    }
+
+    if (form.password.length < 8) {
+      setFormError("Password wajib diisi, minimal 8 karakter!");
       return;
     }
 
@@ -222,7 +228,7 @@ export default function EmployeeList() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title="Karyawan Baru"
-        description="Daftarkan email ini di Supabase Auth terlebih dahulu, lalu isi Supabase User ID di sini."
+        description="Akun & password ini langsung dipakai buat login ke portal internal, gak perlu daftar di tempat lain lagi."
         footer={
           <>
             <Button variant="outline" onClick={() => setIsModalOpen(false)}>
@@ -258,10 +264,11 @@ export default function EmployeeList() {
             required
           />
           <Input
-            label="Supabase User ID"
-            placeholder="UUID dari Supabase Auth"
-            value={form.supabaseId}
-            onChange={(e) => setForm({ ...form, supabaseId: e.target.value })}
+            label="Password"
+            type="password"
+            placeholder="Minimal 8 karakter"
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
             required
           />
           <Select

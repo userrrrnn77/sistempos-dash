@@ -1,5 +1,4 @@
 // src/types/api.ts
-// Tipe-tipe domain data, harus tetap sinkron dengan Mongoose models di backend (backend/src/models/*.ts)
 
 import type { InternalRole, UserStatus } from "./auth";
 
@@ -17,7 +16,6 @@ export interface Branch {
 export interface Category {
   _id: string;
   name: string;
-  /** ["S","M","L","XL","XXL"] atau [] kalau kategori ini gak punya varian */
   variantLabels: string[];
   createdAt: string;
   updatedAt: string;
@@ -25,7 +23,6 @@ export interface Category {
 
 export interface ProductImage {
   url: string;
-  /** Gambar yang dipakai sebagai cover di card katalog. Cuma boleh satu per produk. */
   isCover: boolean;
 }
 
@@ -35,7 +32,6 @@ export interface VariantStock {
 }
 
 export interface ProductVariant {
-  /** Label varian, sesuai Category.variantLabels (mis. "M", "500ml"), atau "-" kalau kategori tanpa varian. */
   label: string;
   stocks: VariantStock[];
 }
@@ -55,11 +51,10 @@ export interface Product {
 
 export interface Employee {
   _id: string;
-  supabaseId: string;
+  supabaseId?: string;
   name: string;
   email: string;
   role: InternalRole;
-  /** Cabang tempat kasir ditugaskan. Cuma relevan untuk role CASHIER. */
   branchId?: string | Pick<Branch, "_id" | "name">;
   status: UserStatus;
   joinedAt: string;
@@ -97,21 +92,18 @@ export interface CartItem {
   branchId: string | Pick<Branch, "_id" | "name" | "code" | "address">;
   qty: number;
   price: number;
-  /** Dihitung backend: price * qty */
   lineTotal: number;
 }
 
 export interface CartBranchGroup {
   branch: string | Pick<Branch, "_id" | "name" | "code" | "address">;
   items: CartItem[];
-  /** Total harga khusus item dari cabang ini */
   subtotal: number;
 }
 
 export interface Cart {
   _id: string;
   customerId: string;
-  /** Item digroup per cabang, karena satu keranjang bisa berisi barang dari beberapa cabang sekaligus */
   branches: CartBranchGroup[];
   totalPrice: number;
   createdAt: string;
@@ -121,9 +113,7 @@ export interface Cart {
 export interface TransactionItem {
   productId: string;
   name: string;
-  /** "-" untuk produk tanpa varian */
   variantLabel: string;
-  /** Cabang asal barang ini terjual/dipotong stoknya */
   branchId: string | Pick<Branch, "_id" | "name" | "address">;
   price: number;
   qty: number;
@@ -138,11 +128,6 @@ export interface Transaction {
   _id: string;
   invoiceNumber: string;
   source: TransactionSource;
-  /**
-   * WAJIB ada untuk source CASHIER (kasir selalu transaksi dari 1 cabang fisik).
-   * KOSONG/undefined untuk source E-COMMERCE — 1 invoice customer bisa berisi barang
-   * dari beberapa cabang sekaligus, jadi cabang dilihat per-item lewat items[].branchId.
-   */
   branchId?: string | Pick<Branch, "_id" | "name" | "address">;
   cashierId?: string | { _id: string; name: string; email: string };
   customerId?: string | { _id: string; name: string; email: string };
@@ -183,7 +168,7 @@ export interface AuditLogPagination {
 
 export interface DailyIncomeSummary {
   date: string;
-  branchId: string; // bisa berisi literal "ALL_BRANCHES" kalau tidak difilter per cabang
+  branchId: string;
   totalTransactions: number;
   summary: {
     totalIncome: number;
@@ -202,11 +187,8 @@ export interface FulfillmentOrder {
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   createdAt: string;
-  /** Sudah difilter backend: cuma item yang branchId-nya cocok cabang yang diminta */
   items: TransactionItem[];
-  /** Subtotal khusus item cabang ini, bukan totalAmount invoice penuh */
   branchSubtotal: number;
-  /** true kalau invoice ini sebenarnya juga punya item di cabang lain */
   isMultiBranchOrder: boolean;
 }
 

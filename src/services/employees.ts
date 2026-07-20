@@ -5,11 +5,10 @@ import type { Employee } from "../types/api";
 import type { InternalRole, UserStatus } from "../types/auth";
 
 export interface CreateEmployeePayload {
-  supabaseId: string;
   name: string;
   email: string;
+  password: string;
   role: InternalRole;
-  /** Wajib diisi kalau role === "CASHIER". */
   branchId?: string;
 }
 
