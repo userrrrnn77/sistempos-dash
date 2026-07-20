@@ -3,22 +3,13 @@ import { useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { Lock, Mail, ShieldCheck, Sparkles } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import type { OAuthProvider } from "../../services/supabaseClient";
 import type { DemoRole } from "../../types/auth";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Alert } from "../../components/ui/Alert";
-import { ProviderIcon } from "../../components/ProviderIcon";
 import { extractErrorMessage } from "../../hooks/useFetch";
 
-const OAUTH_PROVIDERS: { provider: OAuthProvider; label: string }[] = [
-  // { provider: "github", label: "Masuk dengan GitHub" },
-  // { provider: "gitlab", label: "Masuk dengan GitLab" },
-  // { provider: "bitbucket", label: "Masuk dengan Bitbucket" },
-  { provider: "google", label: "Masuk dengan Google" },
-];
-
-// Mode Demo: gak nyentuh Supabase/backend asli, langsung pakai mock user
+// Mode Demo: gak nyentuh backend asli, langsung pakai mock user
 // dari demoMockUsers.ts sesuai role yang dipilih. Lihat AuthContext.tsx
 // (readDemoParamsFromLocation) untuk parsing query param-nya.
 const DEMO_OPTIONS: { role: DemoRole; label: string }[] = [
@@ -32,21 +23,13 @@ function goToDemo(role: DemoRole) {
 }
 
 export default function Login() {
-  const {
-    isAuthenticated,
-    isLoading,
-    authError,
-    loginWithEmail,
-    loginWithOAuth,
-  } = useAuth();
+  const { isAuthenticated, isLoading, authError, loginWithEmail } = useAuth();
   const location = useLocation();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Simpan provider mana yang lagi loading, biar tombol lain gak ikut ke-disable/spin bareng.
-  const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null);
 
   // Kalau sudah login (atau lagi Mode Demo), langsung lempar ke dashboard / halaman asal.
   if (!isLoading && isAuthenticated) {
@@ -55,8 +38,8 @@ export default function Login() {
     return <Navigate to={from} replace />;
   }
 
-  // Prioritaskan authError dari context (mis. OAuth sukses di provider tapi sync ke
-  // backend internal gagal) di atas error aksi lokal (mis. salah password submit form).
+  // Prioritaskan authError dari context (mis. token expired pas bootstrap) di atas
+  // error aksi lokal (mis. salah password submit form).
   const displayedError = authError ?? error;
 
   const handleSubmit = async (e: FormEvent) => {
@@ -70,17 +53,6 @@ export default function Login() {
       setError(extractErrorMessage(err));
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const handleOAuthLogin = async (provider: OAuthProvider) => {
-    setError(null);
-    setOauthLoading(provider);
-    try {
-      await loginWithOAuth(provider);
-    } catch (err) {
-      setError(extractErrorMessage(err));
-      setOauthLoading(null);
     }
   };
 
@@ -132,35 +104,10 @@ export default function Login() {
             <Button
               type="submit"
               className="mt-1 w-full"
-              isLoading={isSubmitting}
-              disabled={oauthLoading !== null}>
+              isLoading={isSubmitting}>
               Masuk
             </Button>
           </form>
-
-          <div className="my-4 flex items-center gap-3">
-            <div className="h-px flex-1 bg-gray-alpha-400" />
-            <span className="text-xs text-gray-700">atau</span>
-            <div className="h-px flex-1 bg-gray-alpha-400" />
-          </div>
-
-          <div className="flex flex-col gap-2.5">
-            {OAUTH_PROVIDERS.map(({ provider, label }) => (
-              <Button
-                key={provider}
-                variant="outline"
-                className="w-full"
-                leftIcon={<ProviderIcon provider={provider} size={16} />}
-                isLoading={oauthLoading === provider}
-                disabled={
-                  isSubmitting ||
-                  (oauthLoading !== null && oauthLoading !== provider)
-                }
-                onClick={() => handleOAuthLogin(provider)}>
-                {label}
-              </Button>
-            ))}
-          </div>
 
           <div className="my-4 flex items-center gap-3">
             <div className="h-px flex-1 bg-gray-alpha-400" />

@@ -14,7 +14,8 @@ export type UserStatus = "active" | "inactive" | "suspended";
  */
 export interface InternalUser {
   id: string;
-  supabaseId: string;
+  /** Peninggalan era Supabase Auth, sudah tidak dipakai untuk login. */
+  supabaseId?: string;
   name: string;
   email: string;
   role: InternalRole;

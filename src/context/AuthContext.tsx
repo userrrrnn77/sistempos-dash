@@ -1,20 +1,18 @@
 // src/context/AuthContext.tsx
-import type { Session } from "@supabase/supabase-js";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 import api from "../services/api";
-import { supabase, type OAuthProvider } from "../services/supabaseClient";
 import type { DemoRole, InternalRole, InternalUser } from "../types/auth";
 import { DEMO_ROLE_TO_INTERNAL_ROLE, isDemoRole } from "../types/auth";
 import { getDemoUser } from "../utils/demoMockUsers";
+import { extractErrorMessage } from "../hooks/useFetch";
 
 const TOKEN_STORAGE_KEY = "token";
 
@@ -23,16 +21,14 @@ interface AuthContextValue {
   user: InternalUser | null;
   /** Role user saat ini. Null kalau belum ada user. Shortcut biar gak perlu `user?.role` di mana-mana. */
   role: InternalRole | null;
-  /** Session Supabase asli. Selalu null saat Mode Demo aktif. */
-  session: Session | null;
-  /** True selama proses cek session awal / sync profile berjalan. */
+  /** True selama proses cek token awal / login berjalan. */
   isLoading: boolean;
   /** True kalau sudah ada user (asli maupun demo) yang siap dipakai render dashboard. */
   isAuthenticated: boolean;
   /**
-   * Pesan error kalau session Supabase valid TAPI sync ke backend internal gagal
-   * (mis. server 500, network error). Beda dari "belum login" — ini dipakai UI
-   * (mis. Login page) buat kasih tau user apa yang salah, bukan diam-diam redirect.
+   * Pesan error kalau ada masalah auth di luar aksi lokal (mis. token expired
+   * pas bootstrap). Beda dari "belum login" — ini dipakai UI (mis. Login page)
+   * buat kasih tau user apa yang salah, bukan diam-diam redirect.
    */
   authError: string | null;
 
@@ -44,8 +40,7 @@ interface AuthContextValue {
 
   // --- Actions ---
   loginWithEmail: (email: string, password: string) => Promise<void>;
-  loginWithOAuth: (provider: OAuthProvider) => Promise<void>;
-  logout: () => Promise<void>;
+  logout: () => void;
   /** Helper RBAC: cek apakah role user saat ini termasuk salah satu dari `roles`. */
   hasRole: (...roles: InternalRole[]) => boolean;
   /**
@@ -83,158 +78,77 @@ function readDemoParamsFromLocation(): {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [{ isDemoMode, demoRole }] = useState(readDemoParamsFromLocation);
 
-  const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<InternalUser | null>(
     isDemoMode && demoRole ? getDemoUser(demoRole) : null,
   );
   const [isLoading, setIsLoading] = useState<boolean>(!isDemoMode);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  /**
-   * Supabase bisa nembak `getSession()` (bootstrap) DAN `onAuthStateChange`
-   * (event INITIAL_SESSION/SIGNED_IN/TOKEN_REFRESHED) untuk session yang SAMA,
-   * hampir bersamaan — apalagi di React StrictMode yang sengaja re-run effect.
-   * Tanpa guard ini, syncInternalProfile bisa nembak 2-3x paralel dan bikin
-   * request belakangan nabrak unique index `supabaseId` di backend (race condition).
-   * Ref ini nyimpen promise yang lagi berjalan per supabaseId, biar request
-   * kedua (dst) numpang nunggu hasil yang pertama alih-alih bikin request baru.
-   */
-  const syncInFlightRef = useRef<{
-    supabaseId: string;
-    promise: Promise<void>;
-  } | null>(null);
-
-  /**
-   * Sinkronkan profile Supabase -> backend internal (MongoDB), lalu simpan user internal-nya.
-   * Dipanggil setelah session Supabase berhasil didapat (login baru maupun restore session).
-   */
-  const syncInternalProfile = useCallback(async (activeSession: Session) => {
-    const { user: supaUser } = activeSession;
-
-    // Kalau ada sync yang lagi jalan untuk supabaseId yang sama, numpang aja hasilnya
-    // daripada nembak request baru yang bakal nabrak duplicate key di backend.
-    if (syncInFlightRef.current?.supabaseId === supaUser.id) {
-      return syncInFlightRef.current.promise;
-    }
-
-    const promise = (async () => {
-      try {
-        const { data } = await api.post("/auth/internal/sync", {
-          supabaseId: supaUser.id,
-          email: supaUser.email,
-          name:
-            (supaUser.user_metadata?.full_name as string | undefined) ??
-            (supaUser.user_metadata?.name as string | undefined) ??
-            supaUser.email,
-        });
-
-        setUser(data.user as InternalUser);
-        setAuthError(null);
-      } catch (err) {
-        console.error("[SistemPOS] Gagal sync profile internal:", err);
-        setUser(null);
-        setAuthError(
-          "Gagal menyinkronkan akun ke server. Coba muat ulang halaman, Bre.",
-        );
-      } finally {
-        // Bersihin slot in-flight cuma kalau masih nunjuk ke request ini,
-        // biar gak ke-clear duluan oleh sync lain yang start lebih baru.
-        if (syncInFlightRef.current?.supabaseId === supaUser.id) {
-          syncInFlightRef.current = null;
-        }
-      }
-    })();
-
-    syncInFlightRef.current = { supabaseId: supaUser.id, promise };
-    return promise;
-  }, []);
-
-  // --- Bootstrap: cek session Supabase yang ada saat app pertama kali dibuka ---
+  // --- Bootstrap: cek token JWT yang tersimpan saat app pertama kali dibuka ---
   useEffect(() => {
-    // Mode Demo aktif -> skip total proses Supabase, user sudah di-mock dari initial state.
+    // Mode Demo aktif -> skip total proses auth beneran, user sudah di-mock dari initial state.
     if (isDemoMode) {
       setIsLoading(false);
       return;
     }
 
     let isMounted = true;
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!isMounted) return;
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
 
-      setSession(data.session);
-
-      if (data.session) {
-        localStorage.setItem(TOKEN_STORAGE_KEY, data.session.access_token);
-        await syncInternalProfile(data.session);
-      } else {
+    api
+      .get("/auth/internal/me")
+      .then(({ data }) => {
+        if (!isMounted) return;
+        setUser(data.data as InternalUser);
+        setAuthError(null);
+      })
+      .catch((err) => {
+        if (!isMounted) return;
+        // Token invalid/expired -> bersihin, jangan tampilkan authError buat kasus
+        // ini (bukan kegagalan tak terduga, ini memang "belum/gak lagi login").
+        console.error("[SistemPOS] Gagal validasi token internal:", err);
         localStorage.removeItem(TOKEN_STORAGE_KEY);
         setUser(null);
-      }
-
-      setIsLoading(false);
-    });
-
-    const { data: subscription } = supabase.auth.onAuthStateChange(
-      async (_event, newSession) => {
+      })
+      .finally(() => {
         if (!isMounted) return;
-
-        setSession(newSession);
-
-        if (newSession) {
-          localStorage.setItem(TOKEN_STORAGE_KEY, newSession.access_token);
-          await syncInternalProfile(newSession);
-        } else {
-          localStorage.removeItem(TOKEN_STORAGE_KEY);
-          setUser(null);
-        }
-      },
-    );
+        setIsLoading(false);
+      });
 
     return () => {
       isMounted = false;
-      subscription.subscription.unsubscribe();
     };
-  }, [isDemoMode, syncInternalProfile]);
+  }, [isDemoMode]);
 
   const loginWithEmail = useCallback(
     async (email: string, password: string) => {
       if (isDemoMode) return; // Mode Demo tidak pernah butuh login beneran
 
       setAuthError(null);
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      try {
+        const { data } = await api.post("/auth/internal/login", {
+          email,
+          password,
+        });
 
-      if (error) throw error;
+        localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
+        setUser(data.user as InternalUser);
+      } catch (err) {
+        throw new Error(extractErrorMessage(err));
+      }
     },
     [isDemoMode],
   );
 
-  const loginWithOAuth = useCallback(
-    async (provider: OAuthProvider) => {
-      if (isDemoMode) return;
-
-      setAuthError(null);
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: `${window.location.origin}/dashboard`,
-        },
-      });
-
-      if (error) throw error;
-    },
-    [isDemoMode],
-  );
-
-  const logout = useCallback(async () => {
+  const logout = useCallback(() => {
     if (isDemoMode) return; // Tidak ada session beneran untuk di-logout-kan
 
-    await supabase.auth.signOut();
     localStorage.removeItem(TOKEN_STORAGE_KEY);
-    setSession(null);
     setUser(null);
   }, [isDemoMode]);
 
@@ -265,27 +179,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       role: user?.role ?? null,
-      session,
       isLoading,
       isAuthenticated: Boolean(user),
       authError,
       isDemoMode,
       demoRole,
       loginWithEmail,
-      loginWithOAuth,
       logout,
       hasRole,
       guardMutation,
     }),
     [
       user,
-      session,
       isLoading,
       authError,
       isDemoMode,
       demoRole,
       loginWithEmail,
-      loginWithOAuth,
       logout,
       hasRole,
       guardMutation,
